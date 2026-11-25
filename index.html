@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CNG Timing Advancer</title>
+<style>
+:root{
+  --bg:#e9ecef; --panel:#fff; --ink:#15202b; --mute:#5d6b79; --line:#cdd5dc;
+  --accent:#0b6e4f; --accent-ink:#fff; --warn:#c2410c; --blue:#1d4ed8; --gauge:#dfe5ea;
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){
+  :root{--bg:#0f1519; --panel:#182128; --ink:#e7edf2; --mute:#93a2b0; --line:#2b3944;
+    --accent:#34d399; --accent-ink:#04231a; --warn:#fb923c; --blue:#7aa2ff; --gauge:#26323b; color-scheme:dark;}
+}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{background:var(--bg);color:var(--ink);font:15px/1.45 "Segoe UI",system-ui,sans-serif;
+  padding:max(14px,env(safe-area-inset-top)) 14px max(14px,env(safe-area-inset-bottom))}
+main{max-width:1000px;margin:0 auto;display:grid;gap:14px;grid-template-columns:repeat(12,1fr)}
+header{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between}
+h1{font-size:20px;margin:0;letter-spacing:.2px}
+h2{font-size:15px;margin:0 0 10px}
+section{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px}
+.c12{grid-column:span 12}.c7{grid-column:span 7}.c5{grid-column:span 5}
+@media(max-width:760px){.c7,.c5{grid-column:span 12}}
+button,select,input{font:inherit;color:inherit}
+button{background:var(--panel);border:1px solid var(--line);border-radius:7px;padding:7px 12px;cursor:pointer}
+button:hover:not(:disabled){border-color:var(--mute)}
+button:disabled{opacity:.45;cursor:not-allowed}
+button.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);font-weight:600}
+button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid var(--blue);outline-offset:2px}
+.status{display:flex;gap:8px;align-items:center;color:var(--mute)}
+.dot{width:10px;height:10px;border-radius:50%;background:var(--mute)}
+.dot.on{background:var(--accent)}
+/* gauge */
+.gauge-wrap{display:grid;grid-template-columns:minmax(200px,300px) 1fr;gap:18px;align-items:center}
+@media(max-width:560px){.gauge-wrap{grid-template-columns:1fr}}
+svg.gauge{width:100%;height:auto}
+.rpm-num{font:700 46px/1 "Segoe UI",system-ui,sans-serif;fill:var(--ink)}
+.rpm-lbl{font-size:13px;fill:var(--mute)}
+.stats{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.stat{border:1px solid var(--line);border-radius:8px;padding:10px 12px}
+.stat b{display:block;font-size:22px}
+.stat span{color:var(--mute);font-size:13px}
+.badge{display:inline-block;padding:2px 10px;border-radius:99px;font-weight:600;font-size:14px;background:var(--gauge)}
+.badge.s0{background:var(--gauge)}
+.badge.s1{background:#fde68a;color:#5b3a00}
+.badge.s2{background:var(--accent);color:var(--accent-ink)}
+canvas{width:100%;height:150px;display:block;margin-top:12px}
+/* table */
+.bins{display:grid;grid-template-columns:repeat(8,1fr);gap:6px}
+@media(max-width:560px){.bins{grid-template-columns:repeat(4,1fr)}}
+.bin{border:1px solid var(--line);border-radius:8px;padding:8px 4px;text-align:center}
+.bin.cur{border-color:var(--accent);box-shadow:inset 0 0 0 1px var(--accent)}
+.bin.dirty select{border-color:var(--warn)}
+.bin small{display:block;color:var(--mute);font-size:12px;margin-bottom:4px}
+.bin select{width:100%;padding:5px 2px;border:1px solid var(--line);border-radius:6px;background:var(--panel);text-align:center}
+.row{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:12px}
+.row label{color:var(--mute);font-size:13px}
+input[type=text],input[type=number]{border:1px solid var(--line);border-radius:7px;padding:7px 9px;background:var(--panel);min-width:0}
+.note{color:var(--mute);font-size:13px;margin:8px 0 0}
+#log{height:190px;overflow:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:8px;
+  font:12.5px/1.4 ui-monospace,Consolas,monospace;white-space:pre-wrap}
+.tx{color:var(--blue)}.err{color:var(--warn)}
+details summary{cursor:pointer;color:var(--mute)}
+</style>
+</head>
+<body>
+<main>
+<header>
+  <h1>CNG Crank Timing Advancer</h1>
+  <div class="status"><span class="dot" id="dot"></span><span id="statusTxt">Disconnected</span>
+    <button class="primary" id="btnConn">Connect</button></div>
+</header>
+
+<section class="c12">
+  <div class="gauge-wrap">
+    <svg class="gauge" viewBox="0 0 300 190" aria-label="RPM gauge">
+      <path id="gBg" fill="none" stroke="var(--gauge)" stroke-width="22" stroke-linecap="round"/>
+      <path id="gFg" fill="none" stroke="var(--accent)" stroke-width="22" stroke-linecap="round"/>
+      <text class="rpm-num" id="rpmTxt" x="150" y="135" text-anchor="middle">0</text>
+      <text class="rpm-lbl" x="150" y="158" text-anchor="middle">RPM</text>
+      <text class="rpm-lbl" x="28" y="180" text-anchor="middle">0</text>
+      <text class="rpm-lbl" x="272" y="180" text-anchor="middle">8000</text>
+    </svg>
+    <div>
+      <div class="stats">
+        <div class="stat"><span>Mode</span><b><span class="badge s0" id="state">–</span></b></div>
+        <div class="stat"><span>Advance now (interpolated)</span><b id="adv">–</b></div>
+        <div class="stat"><span>Commands received by board</span><b id="cmds">–</b></div>
+        <div class="stat"><span>Frames / s</span><b id="fps">–</b></div>
+      </div>
+    </div>
+  </div>
+  <canvas id="chart" aria-label="RPM history"></canvas>
+</section>
+
+<section class="c12">
+  <h2>Advance table (degrees at each RPM point)</h2>
+  <div class="bins" id="bins"></div>
+  <div class="row">
+    <button class="primary" id="btnApply" disabled>Send changes</button>
+    <button id="btnRevert" disabled>Revert to board values</button>
+    <button id="btnSave" disabled title="Writes the table to the board's flash (SAVE)">Save to flash</button>
+    <label>Set all to</label>
+    <select id="allSel" disabled></select>
+    <button id="btnAll" disabled>Apply to all</button>
+    <button id="btnZero" disabled>Zero</button>
+  </div>
+  <canvas id="curve" style="height:170px" aria-label="Advance curve"></canvas>
+  <p class="note">Each slot is the advance at that RPM; the board interpolates linearly between neighbouring points and holds the last value above 7000 RPM.
+  Orange outline = edited, not yet sent. “Send changes” updates the running table; “Save to flash” keeps it after power-off.
+  Range is 0–15° in 1° steps. The two highlighted slots are the ones currently being interpolated. The dashed line is the board's table, the solid line is your edit.</p>
+</section>
+
+<section class="c7">
+  <h2>Console</h2>
+  <div id="log" role="log"></div>
+  <div class="row">
+    <input type="text" id="cmdIn" placeholder="e.g. AD3=12, ZERO, SAVE" style="flex:1" disabled>
+    <button id="btnSend" disabled>Send</button>
+    <button id="btnClear">Clear</button>
+  </div>
+</section>
+
+<section class="c5">
+  <h2>Bluetooth settings</h2>
+  <details open><summary>Bluetooth UUID settings</summary>
+    <div class="row">
+      <label for="uSvc">Service</label><input type="text" id="uSvc" value="55535343-fe7d-4ae5-8fa9-9fafd205e455" placeholder="auto-detect" style="width:100%">
+      <label for="uTx">Notify char (module → web)</label><input type="text" id="uTx" value="49535343-1e4d-4bd9-ba61-23c647249616" placeholder="auto-detect" style="width:100%">
+      <label for="uRx">Write char (web → module)</label><input type="text" id="uRx" value="49535343-8841-43f4-a8d4-ecbe34729bb3" placeholder="auto-detect" style="width:100%">
+    </div>
+    <p class="note">Pre-filled with the UUIDs found in your Advancer APK. Clear the fields to auto-detect instead. Enter 16-bit (e.g. ffe1) or full 128-bit UUIDs if your PB-03F firmware uses a custom service.</p>
+  </details>
+</section>
+</main>
+
+<script>
+(() => {
+'use strict';
+const $ = id => document.getElementById(id);
+const STATES = ['Petrol','Transition','CNG'];
+const BIN_LABELS = ['0','1000','2000','3000','4000','5000','6000','7000'];
+const MAX_RPM = 8000;
+// Service UUIDs the page may access (Web Bluetooth requires them up front)
+const KNOWN_SERVICES = ['55535343-fe7d-4ae5-8fa9-9fafd205e455',0xfee0,0xfee7,0xae00,0xabf0,0xfd00,
+  '6e400001-b5a3-f393-e0a9-e50e24dcca9e','49535343-fe7d-4ae5-8fa9-9fafd205e455',
+  '0000ffe0-0000-1000-8000-00805f9b34fb'];
+for(const base of [0xff00,0xffa0,0xffb0,0xffc0,0xffd0,0xffe0,0xfff0])
+  for(let i=0;i<16;i++) if(!KNOWN_SERVICES.includes(base+i)) KNOWN_SERVICES.push(base+i);
+
+let dev=null, txChar=null, rxChar=null, rxBuf='', sendQ=[], sending=false;
+let board=null;          // last table reported by board (array of 8)
+let edit=new Array(8).fill(0);
+let touched=false;       // user has edited -> don't overwrite from telemetry
+const hist=[]; let frames=0, lastRpm=0;
+// Same maths as the firmware but with 1000 RPM spacing: points at 0,1000..7000 RPM, linear between, flat above 7000
+function interp(t,rpm){
+  if(rpm>=7000) return t[7];
+  const i=Math.floor(rpm/1000), f=(rpm-i*1000)/1000;
+  return t[i]+(t[i+1]-t[i])*f;
+}
+
+/* ---------- UI build ---------- */
+const binsEl=$('bins'), selects=[];
+for(let i=0;i<8;i++){
+  const d=document.createElement('div'); d.className='bin'; d.id='bin'+i;
+  d.innerHTML=`<small>${BIN_LABELS[i]}</small>`;
+  const s=document.createElement('select'); s.setAttribute('aria-label','Advance for '+BIN_LABELS[i]+' RPM');
+  for(let v=0;v<16;v++) s.add(new Option(v+'°',v));
+  s.onchange=()=>{edit[i]=+s.value; touched=true; refreshDirty();};
+  d.appendChild(s); binsEl.appendChild(d); selects.push(s);
+}
+for(let v=0;v<16;v++) $('allSel').add(new Option(v+'°',v));
+
+function drawCurve(){
+  const c=$('curve'); if(!c) return;
+  const dpr=window.devicePixelRatio||1, w=c.clientWidth, h=c.clientHeight; c.width=w*dpr; c.height=h*dpr;
+  const g=c.getContext('2d'); g.scale(dpr,dpr);
+  const css=getComputedStyle(document.documentElement), L=30, B=18, T=8;
+  const X=r=>L+(w-L-8)*r/8000, Y=v=>h-B-(h-B-T)*v/15;
+  g.font='11px sans-serif'; g.fillStyle=css.getPropertyValue('--mute'); g.strokeStyle=css.getPropertyValue('--line'); g.lineWidth=1;
+  for(let v=0;v<=15;v+=5){g.beginPath(); g.moveTo(L,Y(v)); g.lineTo(w-8,Y(v)); g.stroke(); g.fillText(v+'°',2,Y(v)+4);}
+  for(let r=0;r<=8000;r+=2000) g.fillText(r,X(r)-10,h-4);
+  const line=(t,color,dash)=>{g.strokeStyle=color; g.lineWidth=2; g.setLineDash(dash); g.beginPath();
+    t.forEach((v,i)=>i?g.lineTo(X(i*1000),Y(v)):g.moveTo(X(i*1000),Y(v)));
+    g.lineTo(X(8000),Y(t[7])); g.stroke(); g.setLineDash([]);};
+  if(board) line(board,css.getPropertyValue('--mute'),[5,4]);
+  line(edit,css.getPropertyValue('--accent'),[]);
+  const t=board||edit, r=Math.min(lastRpm,8000);
+  g.fillStyle=css.getPropertyValue('--warn'); g.beginPath(); g.arc(X(r),Y(interp(t,lastRpm)),5,0,7); g.fill();
+}
+window.addEventListener('resize',drawCurve);
+function refreshDirty(){
+  let any=false;
+  for(let i=0;i<8;i++){
+    const dirty=board && edit[i]!==board[i]; any=any||dirty;
+    $('bin'+i).classList.toggle('dirty',!!dirty);
+    selects[i].value=edit[i];
+  }
+  $('btnApply').disabled=!(txOK()&&any);
+  $('btnRevert').disabled=!(board&&any);
+  drawCurve();
+}
+const txOK=()=>!!rxChar;
+
+function setConn(on,txt){
+  $('dot').classList.toggle('on',on);
+  $('statusTxt').textContent=txt;
+  $('btnConn').textContent=on?'Disconnect':'Connect';
+  ['btnSave','btnAll','btnZero','allSel','btnSend','cmdIn']
+    .forEach(id=>$(id).disabled=!on);
+  refreshDirty();
+}
+
+/* ---------- log ---------- */
+function log(t,cls){
+  const el=$('log'), atEnd=el.scrollTop+el.clientHeight>=el.scrollHeight-8;
+  const s=document.createElement('span'); if(cls) s.className=cls; s.textContent=t+'\n'; el.appendChild(s);
+  while(el.childNodes.length>400) el.removeChild(el.firstChild);
+  if(atEnd) el.scrollTop=el.scrollHeight;
+}
+$('btnClear').onclick=()=>{$('log').textContent='';};
+
+/* ---------- gauge ---------- */
+function arc(r,a0,a1){ // angles in degrees, 180 = left, 0 = right (top half)
+  const p=a=>[150+r*Math.cos(a*Math.PI/180),150-r*Math.sin(a*Math.PI/180)];
+  const [x0,y0]=p(a0),[x1,y1]=p(a1);
+  return `M${x0.toFixed(1)} ${y0.toFixed(1)} A${r} ${r} 0 ${a0-a1>180?1:0} 1 ${x1.toFixed(1)} ${y1.toFixed(1)}`;
+}
+$('gBg').setAttribute('d',arc(122,180,0));
+function setGauge(rpm){
+  const f=Math.min(rpm/MAX_RPM,1), a=180-180*f;
+  $('gFg').setAttribute('d', f<0.004 ? '' : arc(122,180,Math.max(a,0.5)));
+  $('rpmTxt').textContent=rpm;
+}
+setGauge(0);
+
+/* ---------- chart ---------- */
+function drawChart(){
+  const c=$('chart'), dpr=window.devicePixelRatio||1;
+  const w=c.clientWidth,h=c.clientHeight; c.width=w*dpr; c.height=h*dpr;
+  const g=c.getContext('2d'); g.scale(dpr,dpr);
+  const css=getComputedStyle(document.documentElement);
+  g.strokeStyle=css.getPropertyValue('--line'); g.fillStyle=css.getPropertyValue('--mute'); g.font='11px sans-serif';
+  for(let v=0;v<=8000;v+=2000){const y=h-14-(h-22)*v/MAX_RPM; g.beginPath(); g.moveTo(34,y); g.lineTo(w,y); g.stroke(); g.fillText(v,2,y+4);}
+  if(hist.length<2) return;
+  g.strokeStyle=css.getPropertyValue('--accent'); g.lineWidth=2; g.beginPath();
+  hist.forEach((v,i)=>{const x=34+(w-34)*i/(300-1), y=h-14-(h-22)*Math.min(v,MAX_RPM)/MAX_RPM; i?g.lineTo(x,y):g.moveTo(x,y);});
+  g.stroke();
+}
+window.addEventListener('resize',drawChart);
+
+/* ---------- telemetry parsing ---------- */
+// Board frame: $rpm,tableHex8,adv[,cmdCount,state]\r
+function handleLine(line){
+  line=line.trim(); if(!line) return;
+  if(line[0]==='$'){
+    const p=line.slice(1).split(',');
+    const rpm=parseInt(p[0],10), tbl=parseInt(p[1],16), adv=parseInt(p[2],10);
+    if(isNaN(rpm)||isNaN(tbl)) { log(line,'err'); return; }
+    frames++;
+    setGauge(rpm); hist.push(rpm); if(hist.length>300) hist.shift(); drawChart();
+    lastRpm=rpm;
+    if(p.length>3) $('cmds').textContent=p[3];
+    if(p.length>4){const s=+p[4]; const b=$('state'); b.textContent=STATES[s]??s; b.className='badge s'+s;}
+    const t=[]; for(let i=0;i<8;i++) t.push((tbl>>>(i*4))&0xF);
+    const changed=!board||t.some((v,i)=>v!==board[i]);
+    board=t;
+    if(!touched){edit=t.slice(); }
+    if(changed||!touched) refreshDirty();
+    if(touched && !t.some((v,i)=>v!==edit[i])) touched=false; // board caught up with edits
+    // highlight active bin
+    $('adv').textContent=interp(t,rpm).toFixed(1)+'°';
+    for(let i=0;i<8;i++) $('bin'+i).classList.remove('cur');
+    const idx=Math.min(7,Math.floor(rpm/1000)); $('bin'+idx).classList.add('cur'); if(rpm<7000) $('bin'+(idx+1)).classList.add('cur');
+    drawCurve();
+  } else if(line[0]==='#'){ /* short status frame, ignored */ }
+  else log(line);
+}
+function onData(bytes){
+  rxBuf+=new TextDecoder().decode(bytes);
+  let i;
+  while((i=rxBuf.search(/[\r\n]/))>=0){ const l=rxBuf.slice(0,i); rxBuf=rxBuf.slice(i+1); handleLine(l); }
+  if(rxBuf.length>200) rxBuf='';
+}
+setInterval(()=>{$('fps').textContent=dev?frames:'–'; frames=0;},1000);
+
+/* ---------- sending (queued: board polls its UART buffer every ~40 ms) ---------- */
+function send(cmd){ sendQ.push(cmd); pump(); }
+async function pump(){
+  if(sending) return; sending=true;
+  while(sendQ.length && rxChar){
+    const c=sendQ.shift();
+    try{
+      const data=new TextEncoder().encode(c);
+      if(rxChar.properties.writeWithoutResponse) await rxChar.writeValueWithoutResponse(data);
+      else await rxChar.writeValue(data);
+      log('> '+c,'tx');
+    }catch(e){ log('Write failed: '+e.message,'err'); sendQ.length=0; break; }
+    await new Promise(r=>setTimeout(r,120));
+  }
+  sending=false;
+}
+
+/* ---------- connection ---------- */
+const norm=u=>{u=u.trim().toLowerCase(); if(!u) return null; return /^[0-9a-f]{4}$/.test(u)?parseInt(u,16):u;};
+
+async function connect(){
+  if(!navigator.bluetooth){ alert('Web Bluetooth is not available. Use Chrome or Edge (desktop/Android) over HTTPS or localhost.'); return; }
+  try{
+    const custom=norm($('uSvc').value);
+    const services=custom?[custom,...KNOWN_SERVICES]:KNOWN_SERVICES;
+    dev=await navigator.bluetooth.requestDevice({acceptAllDevices:true, optionalServices:services});
+    dev.addEventListener('gattserverdisconnected',onDisc);
+    setConn(false,'Connecting…');
+    const server=await dev.gatt.connect();
+    let svcs=[]; try{ svcs=await server.getPrimaryServices(); }catch(e){ log('Service discovery: '+e.message,'err'); }
+    log('Accessible services: '+(svcs.length?svcs.map(x=>x.uuid).join(', '):'none'));
+    const wantTx=norm($('uTx').value), wantRx=norm($('uRx').value);
+    let tx=null, rx=null;
+    for(const s of svcs){
+      if(custom && s.uuid!==BluetoothUUID.getService(custom)) continue;
+      let chars=[]; try{ chars=await s.getCharacteristics(); }catch(e){ continue; }
+      for(const ch of chars){
+        const p=ch.properties;
+        if(wantTx? ch.uuid===BluetoothUUID.getCharacteristic(wantTx) : (!tx&&(p.notify||p.indicate))) tx=ch;
+        if(wantRx? ch.uuid===BluetoothUUID.getCharacteristic(wantRx) : (!rx&&(p.write||p.writeWithoutResponse))) rx=ch;
+      }
+      if(tx&&rx) break;
+    }
+    if(!tx){
+      const msg=svcs.length
+        ? 'Found services but no notify characteristic. Enter the correct characteristic UUIDs under “Bluetooth UUID settings”.'
+        : 'The browser can see no usable service. Find the module’s service UUID (nRF Connect app), enter it under “Bluetooth UUID settings”, then connect again.';
+      
+      throw new Error(msg);
+    }
+    txChar=tx; rxChar=rx;
+    log(`Using notify ${tx.uuid}`+(rx?`, write ${rx.uuid}`:' (no write characteristic found)'));
+    tx.addEventListener('characteristicvaluechanged',e=>onData(new Uint8Array(e.target.value.buffer)));
+    await tx.startNotifications();
+    rxBuf=''; touched=false;
+    setConn(true,'Connected: '+(dev.name||'BLE device'));
+  }catch(e){
+    if(e.name!=='NotFoundError') log('Error: '+e.message,'err');
+    if(dev&&dev.gatt.connected) dev.gatt.disconnect(); else onDisc();
+  }
+}
+function onDisc(){ txChar=rxChar=null; sendQ.length=0; board=null; setConn(false,'Disconnected'); ['adv','cmds','fps'].forEach(i=>$(i).textContent='–'); const b=$('state'); b.textContent='–'; b.className='badge s0'; setGauge(0); }
+$('btnConn').onclick=()=>{ if(dev&&dev.gatt.connected) dev.gatt.disconnect(); else connect(); };
+
+/* ---------- actions ---------- */
+$('btnApply').onclick=()=>{ for(let i=0;i<8;i++) if(!board||edit[i]!==board[i]) send(`AD${i}=${edit[i]}`); };
+$('btnRevert').onclick=()=>{ edit=board.slice(); touched=false; refreshDirty(); };
+$('btnSave').onclick=()=>{ if(confirm('Write the current table to flash?')) send('SAVE'); };
+$('btnZero').onclick=()=>{ edit.fill(0); touched=true; send('ZERO'); refreshDirty(); };
+$('btnAll').onclick=()=>{ const v=+$('allSel').value; edit.fill(v); touched=true; for(let i=0;i<8;i++) if(!board||board[i]!==v) send(`AD${i}=${v}`); refreshDirty(); };
+function manual(){ const v=$('cmdIn').value.trim(); if(v.length>15){ alert('Max 15 characters (board buffer is 16 bytes).'); return;} if(v){ send(v); $('cmdIn').value=''; } }
+$('btnSend').onclick=manual;
+$('cmdIn').addEventListener('keydown',e=>{ if(e.key==='Enter') manual(); });
+
+setConn(false,'Disconnected'); drawChart();
+})();
+</script>
+</body>
+</html>
